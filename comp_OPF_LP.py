@@ -10,7 +10,7 @@ import json
 
 # define DSS path
 dataset = "IEEETestCases"
-NetworkModel = "123Bus" # "SecondaryTestCircuit_modified", "13Bus", "123Bus", "case3", "4Bus-DY-Bal"
+NetworkModel = "123Bus_wye" # "SecondaryTestCircuit_modified", "13Bus", "123Bus", "case3", "4Bus-DY-Bal"
 InFile1 = "IEEE123Master.dss" # "Master.DSS", "IEEE13Nodeckt.dss", "IEEE123Master.dss", "case3_unbalanced.dss", "4Bus-DY-Bal.dss"
 
 ####
@@ -29,7 +29,6 @@ qsts = json.load(f)
 ####
 # preprocess PTDF
 ###
-
 # row length
 rl = len(qsts["dpdp"]["bpns"])
 
@@ -44,19 +43,7 @@ PTDF = pd.DataFrame(PTDF, columns=qsts["dpdp"]["nodes"], index=qsts["dpdp"]["lns
 ####
 # preprocess penalty factors
 ###
-
-# # compute dPgref
-# dPgref = np.min(PTDF[:3], axis=0)
-
-# # dPl/dPgi = 1 - (- dPgref/dPgi) -> eq. L9_25
-
-# # ITLi = dPL/dPGi 
-# ITL = 1.0 + dPgref # Considering a PTDF with transfer from bus i to the slack. If PTDF is calculated in the converse, then it will be 1 - dPgref
-
-# pf = 1.0 / (1.0- ITL)
-
-# # substation correction
-# pf.iloc[:3] = 1.0
+pf = pd.Series(np.ones(len(qsts["dpdp"]["nodes"])), index=qsts["dpdp"]["nodes"])
 
 ####
 # adjust lossless PTDF
@@ -175,12 +162,12 @@ cdr = DRcost*np.ones((1, n * PointsInTime))
 ####
 # preprocess voltage base for each node
 ####
-nodes = [n.lower() for n in qsts["ybus"]["nodes"]]
-vdict = {key.lower(): 0.0 for key in nodes}
-for bus in qsts["bus"]:
+nodes = qsts["dpdp"]["nodes"]
+vdict = {key: 0.0 for key in nodes}
 
+for bus in qsts["bus"]:
     # get bus uid
-    uid = bus["uid"].lower()
+    uid = bus["uid"]
 
     # get load phases
     phases = bus["phases"]
@@ -217,7 +204,6 @@ fdict = {key: np.zeros(24) for key in bpns}
 #     # for each flow
 #     for ph in br["phases"]:
 #         fdict[uid + f".{ph}"] = np.asarray(br["p_nm"][f"{ph}"])
-
 Pjk_0 = pd.DataFrame(np.stack([fdict[n] for n in bpns]), index = np.asarray(bpns))
 
 ####
@@ -231,7 +217,7 @@ for bus in qsts["bus"]:
     uid = bus["uid"] 
 
     # get load phases
-    phases = bus["nodes"]
+    phases = bus["phases"]
 
     # load power 
     for ph in phases:
@@ -264,10 +250,11 @@ Pdr_0 = pd.DataFrame(0.0, index = np.asarray(nodes), columns = np.arange(PointsI
 ####################################
 ########## optimization
 ####################################
+storage = bool(batt) # if storage is considered
 
 # create an instance of the dispatch class
 # obj = LP_dispatch(pf, PTDF, batt, Pjk_lim, Gmax, cgn, clin, cdr, v_base, dvdp, storage, vmin, vmax)
-Obj = LP_dispatch(pf, PTDF, batt, Lmax, Gmax, cgn, clin, cdr, v_base, dvdp, storage=True)
+Obj = LP_dispatch(pf, PTDF, batt, Lmax, Gmax, cgn, clin, cdr, v_base, dvdp, storage=storage)
 
 # call the OPF method
 # x, m, LMP, Ain = dispatch_obj.PTDF_LP_OPF(demandProfile, Pjk_0, v_0, Pg_0, PDR_0)
@@ -276,8 +263,20 @@ print(x.X)
 print('Obj: %g' % m.objVal)
 
 #plot results
-
 plot_obj = plottingDispatch(None, None, PointsInTime, DIR, vmin=0.95, vmax=1.05, PTDF=PTDF, dispatchType='LP')
 
 # extract dispatch results
-Pg, Pdr, Pij, Pchar, Pdis, E = plot_obj.extractResults(x=x, DR=True, Storage=False, batt=batt)
+Pg, Pdr, Pij, Pchar, Pdis, E = plot_obj.extractResults(x=x, 
+                                                       DR=True, 
+                                                       Storage=storage, 
+                                                       batt=batt
+                                                       )
+demandProfilei = DemandProfile.any(axis=1)
+lnodes = np.where(demandProfilei)[0]    
+
+# extract LMP results
+LMP_Pg, LMP_Pdr, LMP_Pij, LMP_Pchar, LMP_Pdis, LMP_E = plot_obj.extractLMP(LMP, True, storage, batt)
+outLMP = pd.DataFrame(LMP_Pg[lnodes,:], np.asarray(PTDF.columns[lnodes]), Vm_0.columns) 
+subCost = pd.DataFrame(Gcost[0:3,:], index=PTDF.columns[0:3], columns=Vm_0.columns)
+outLMP = pd.concat([subCost, outLMP], axis=0)
+print(outLMP.head())
