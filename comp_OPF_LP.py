@@ -1,6 +1,6 @@
 # required for processing
-from scr.DispatchTS_DR_PV_S_DR_voltage import Dispatch
-from scr.Plotting import PlottingDispatch
+from scr.LP_dispatch import LP_dispatch
+from scr.plotting import plottingDispatch
 import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
@@ -36,14 +36,32 @@ rl = len(qsts["dpdp"]["bpns"])
 # column length
 cl = len(qsts["dpdp"]["nodes"])
 
-# get dpdp
-PTDF = qsts["dpdp"]["matrix"]
-
 # reshape flatten array
 PTDF = np.reshape(qsts["dpdp"]["matrix"], (rl, cl), order='F')
 PTDF = pd.DataFrame(PTDF, columns=qsts["dpdp"]["nodes"], index=qsts["dpdp"]["nnns"])
 
+
+####
+# preprocess penalty factors
+###
+
+# compute dPgref
+dPgref = np.min(PTDF[:3], axis=0)
+
+# dPl/dPgi = 1 - (- dPgref/dPgi) -> eq. L9_25
+
+# ITLi = dPL/dPGi 
+ITL = 1.0 + dPgref # Considering a PTDF with transfer from bus i to the slack. If PTDF is calculated in the converse, then it will be 1 - dPgref
+
+pf = 1.0 / (1.0- ITL)
+
+# substation correction
+pf.iloc[:3] = 1.0
+
+####
 # adjust lossless PTDF
+####
+
 PTDF= PTDF.round()
 
 # points in time
@@ -56,7 +74,7 @@ nodes = qsts["dpdp"]["nodes"]
 ddict = {key: np.zeros(24) for key in nodes}
 for load in qsts["load"]:
 
-    # get load bus
+    # get load bus uid
     bus = load["bus"] 
 
     # get load phases
@@ -102,7 +120,7 @@ ldict = {key: 0.0 for key in bpns}
 
 for br in qsts["branch"]:
 
-    # get uid
+    # get branch uid
     uid = br["uid"]
 
     # get line or transformer
@@ -122,7 +140,7 @@ for br in qsts["branch"]:
 Lmaxi = pd.DataFrame(np.asarray([ldict[n] for n in bpns]), np.asarray(bpns))
 
 Lmax = np.kron(Lmaxi, np.ones((1,PointsInTime)))
-Lmax = np.reshape(Lmax.T, (1,np.size(Lmax)), order="F")
+Lmax = pd.DataFrame(Lmax, index=np.asarray(bpns))
 
 ####
 # preprocess storage
@@ -155,64 +173,116 @@ batt['BatPenalty'] = np.ones((1,numBatteries))
 ####
 # preprocess demand response
 ####
-DRcost = 0.5
+DRcost = 5000
 n = len(PTDF.columns)
 c = len(PTDF.index)
 cdr = DRcost*np.ones((1, n * PointsInTime)) 
+
+####
+# preprocess voltage base for each node
+####
+
+nodes = qsts["dvdp"]["nodes"]
+vdict = {key: 0.0 for key in nodes}
+for bus in qsts["bus"]:
+
+    # get bus uid
+    uid = bus["uid"]
+
+    # get load phases
+    phases = bus["nodes"]
+
+    # load power 
+    for ph in phases:
+        vdict[uid + f".{ph}"] = bus["kV_base"]
+v_basei = pd.DataFrame(np.asarray([vdict[n] for n in nodes]), index = np.asarray(nodes))
+v_base = np.kron(v_basei, np.ones((1, PointsInTime)))
+v_base = pd.DataFrame(v_base, index=v_basei.index)
+
+
+####
+# preprocess voltage sensitivity
+####
+# row and columng length
+rcl = len(qsts["dvdp"]["nodes"])
+
+# reshape flatten array
+dvdp = np.reshape(qsts["dvdp"]["matrix"], (rcl, rcl), order='F')
+dvdp = pd.DataFrame(dvdp, columns=qsts["dvdp"]["nodes"], index=qsts["dvdp"]["nodes"])
+
+####
+# preprocess initial flows 
+####
+bpns = qsts["dpdp"]["bpns"]
+fdict = {key: np.zeros(24) for key in bpns}
+for br in qsts["branch"]:
+
+    # get branch uid
+    uid = br["uid"]
+
+    # for each flow
+    for ph in br["phases"]:
+        fdict[uid + f".{ph}"] = np.asarray(br["pij"][f"{ph}"])
+Pjk_0 = pd.DataFrame(np.stack([fdict[n] for n in bpns]), index = np.asarray(bpns))
+
+####
+# preprocess initial voltages magnitutes
+####
+nodes = qsts["dpdp"]["nodes"]
+vdict = {key: np.zeros(24) for key in nodes}
+for bus in qsts["bus"]:
+
+    # get load bus uid
+    uid = bus["uid"] 
+
+    # get load phases
+    phases = bus["nodes"]
+
+    # load power 
+    for ph in phases:
+        vdict[uid + f".{ph}"] = np.asarray(bus["vm"][f"{ph}"])
+Vm_0 = pd.DataFrame(np.stack([vdict[n] for n in nodes]), index = np.asarray(nodes))
+
+####
+# initial generation
+####
+nodes = qsts["dpdp"]["nodes"]
+gdict = {key: np.zeros(24) for key in nodes}
+for vs in qsts["vsource"]:
+
+    # get load bus uid
+    uid = vs["bus"] 
+
+    # get load phases
+    phases = vs["phases"]
+
+    # load power 
+    for ph in phases:
+        gdict[uid + f".{ph}"] = np.asarray(vs["p"][f"{ph}"])
+Pg_0 = pd.DataFrame(np.stack([gdict[n] for n in nodes]), index = np.asarray(nodes))
+
+####
+# initial demand response 
+####
+Pdr_0 = pd.DataFrame(0.0, index = np.asarray(nodes), columns = np.arange(PointsInTime))
 
 ####################################
 ########## optimization
 ####################################
 
 # create an instance of the dispatch class
-# Obj = Dispatch(PTDF, PointsInTime, batt, Lmax, Gmax, cgn, clin)
-# Obj = Dispatch(PTDF, PointsInTime, batt, Lmax, Gmax, cgn, clin, cdr, vBase, vSensi, initVolts, PVnodes)
-Obj = Dispatch(PTDF, PointsInTime, batt, Lmax, Gmax, cgn, clin, cdr)
+# obj = LP_dispatch(pf, PTDF, batt, Pjk_lim, Gmax, cgn, clin, cdr, v_base, dvdp, storage, vmin, vmax)
+Obj = LP_dispatch(pf, PTDF, batt, Lmax, Gmax, cgn, clin, cdr, v_base, dvdp, storage=True)
 
 # call the OPF method
-# x, m = Obj.PTDF_OPF(DemandProfile, storage=False)
-# x, m, Ain = Obj.PTDF_OPF(DemandProfile, voltage=voltage, storage=storage, DR = DR, PV=PV)
-x, m = Obj.PTDF_OPF(DemandProfile, storage=True, DR=True)
+# x, m, LMP, Ain = dispatch_obj.PTDF_LP_OPF(demandProfile, Pjk_0, v_0, Pg_0, PDR_0)
+x, m, LMP, Ain = Obj.PTDF_LP_OPF(DemandProfile, Pjk_0, Vm_0, Pg_0, Pdr_0)
 print(x.X)
 print('Obj: %g' % m.objVal)
 
-# Pg = np.reshape(x.X[:n*PointsInTime], (PointsInTime,n), order='F').T
-# Pdr   = np.reshape(x.X[n*PointsInTime:2*n*PointsInTime], (PointsInTime, n), order='F').T;
-# Pij = np.reshape(x.X[n*PointsInTime:(n+c)*PointsInTime], (PointsInTime, c), order='F').T
-# Pchar = np.reshape(x.X[(n+c)*PointsInTime:(n+c)*PointsInTime+numBatteries*PointsInTime] , (PointsInTime,numBatteries), order='F').T
-# Pdis = np.reshape(x.X[(n+c+numBatteries)*PointsInTime:(n+c+2*numBatteries)*PointsInTime], (PointsInTime,numBatteries), order='F').T
-# soc = np.reshape(x.X[(n+c+2*numBatteries)*PointsInTime:-numBatteries], (PointsInTime,numBatteries), order='F').T
-
 #plot results
-# Plot_obj = PlottingDispatch(x, DR, storage, PTDF=PTDF, PointsInTime=PointsInTime, batt=batt, script_path=json_path)
-# script_path = os.path.dirname(os.path.abspath(__file__))
-Plot_obj = PlottingDispatch(x, True, True, PTDF, PointsInTime, batt, DIR)
 
-Plot_obj.Pg
-Plot_obj.Pdr
-Plot_obj.Pij
-Plot_obj.Pchar
-Plot_obj.Pdis
-Plot_obj.E
+plot_obj = plottingDispatch(None, None, PointsInTime, DIR, vmin=0.95, vmax=1.05, PTDF=PTDF, dispatchType='LP')
 
-# # Plot demand response
-# Plot_obj.Plot_DemandResponse(niter="Low_Pjk_limits")
-
-
-
-
-# # Plot Line Limits
-# Plot_obj.Plot_Pjk(Lmax, niter="Low_Pjk_limits")
-
-# # Plot Energy storage
-# Plot_obj.Plot_storage(batt, Gcost[0,:], niter="Low_Pjk_limits") 
-
-# # PTDF
-# Plot_obj.Plot_PTDF()
-
-# # Plot Demand
-# # Plot_obj.Plot_Demand(DemandProfile)
-
-# # Plot Dispatch
-# Plot_obj.Plot_Dispatch(niter="Low_Pjk_limits")
-# # call the OPF method
+# extract dispatch results
+Pg, Pdr, Pij, Pchar, Pdis, E = plot_obj.extractResults(x=x, DR=True, Storage=False, batt=batt)

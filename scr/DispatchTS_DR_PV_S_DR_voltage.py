@@ -9,7 +9,7 @@ from gurobipy import GRB
 import pandas as pd
 import pathlib
 import os
-# from Plotting import PlottingDispatch
+from scr.Plotting import PlottingDispatch
 
 class Dispatch:
     
@@ -254,9 +254,6 @@ class Dispatch:
         # Aeq2 at this point:
         # columns: PscBt1,PscBtf,...,PsdBt1,PsdBtf,...,EBt1,EBtf 
         # rows:    (n+l)*PointsInTime + (1 + PointsInTime)*numBatteries
-        print(Aeq2.shape)
-        print(Aeq2_auxP.shape)
-        print(Aeq2_auxE.shape)
         Aeq2 = np.block([[Aeq2],
                         [Aeq2_auxP, Aeq2_auxE]])
         
@@ -707,10 +704,10 @@ def main():
     Lmax = np.reshape(Lmax.T, (1,np.size(Lmax)), order="F")
     
     #plot results
-    #Plot_obj = PlottingDispatch(x, DR, storage, PTDF, PointsInTime, batt, script_path, Ain)
+    Plot_obj = PlottingDispatch(x, DR, storage, PTDF, PointsInTime, batt, script_path, Ain)
     
     # Plot demand response
-    #Plot_obj.Plot_DemandResponse(niter="Low_Pjk_limits")
+    Plot_obj.Plot_DemandResponse(niter="Low_Pjk_limits")
     
     # Plot Line Limits
     # Plot_obj.Plot_Pjk(Linfo, Lmax, niter="Low_Pjk_limits")

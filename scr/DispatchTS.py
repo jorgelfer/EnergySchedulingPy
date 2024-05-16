@@ -480,7 +480,7 @@ def main():
     # Lmax = np.reshape(Lmax.T, (1,np.size(Lmax)), order="F")
     
     # # plot results
-    # Obj.Plot_results(x, m, Gcost[0,:], Lmax, Linfo,  1)
+    Obj.Plot_results(x, m, Gcost[0,:], Lmax, Linfo,  1)
     
 # +=================================================================================================
 if __name__ == "__main__":
