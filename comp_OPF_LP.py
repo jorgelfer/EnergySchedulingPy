@@ -1,6 +1,7 @@
 # required for processing
 from scr.LP_dispatch import LP_dispatch
 from scr.Plotting import plottingDispatch
+from scr.SLP_dispatch import SLP_dispatch
 import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
@@ -12,6 +13,9 @@ import json
 dataset = "IEEETestCases"
 NetworkModel = "123Bus_wye" # "SecondaryTestCircuit_modified", "13Bus", "123Bus", "case3", "4Bus-DY-Bal"
 InFile1 = "IEEE123Master.dss" # "Master.DSS", "IEEE13Nodeckt.dss", "IEEE123Master.dss", "case3_unbalanced.dss", "4Bus-DY-Bal.dss"
+
+# define optimization model
+dispatch = 'SLP'
 
 ####
 # load qsts 
@@ -48,7 +52,6 @@ pf = pd.Series(np.ones(len(qsts["dpdp"]["nodes"])), index=qsts["dpdp"]["nodes"])
 ####
 # adjust lossless PTDF
 ####
-
 PTDF= PTDF.round()
 
 # points in time
@@ -253,17 +256,21 @@ Pdr_0 = pd.DataFrame(0.0, index = np.asarray(nodes), columns = np.arange(PointsI
 storage = bool(batt) # if storage is considered
 
 # create an instance of the dispatch class
-# obj = LP_dispatch(pf, PTDF, batt, Pjk_lim, Gmax, cgn, clin, cdr, v_base, dvdp, storage, vmin, vmax)
-Obj = LP_dispatch(pf, PTDF, batt, Lmax, Gmax, cgn, clin, cdr, v_base, dvdp, storage=storage)
+if dispatch == 'SLP':
+    Obj = SLP_dispatch(pf, PTDF, batt, Lmax, Gmax, cgn, clin, cdr, v_base, dvdp, storage=storage)
+    x, m, LMP = Obj.PTDF_SLP_OPF(DemandProfile, Pjk_0, Vm_0, Pg_0, Pdr_0)
+else:
+    #   = LP_dispatch(pf, PTDF, batt, Pjk_lim, Gmax, cgn, clin, cdr, v_base, dvdp, storage, vmin, vmax)
+    Obj = LP_dispatch(pf, PTDF, batt, Lmax, Gmax, cgn, clin, cdr, v_base, dvdp, storage=storage)
+    x, m, LMP, Ain = Obj.PTDF_LP_OPF(DemandProfile, Pjk_0, Vm_0, Pg_0, Pdr_0)
 
 # call the OPF method
 # x, m, LMP, Ain = dispatch_obj.PTDF_LP_OPF(demandProfile, Pjk_0, v_0, Pg_0, PDR_0)
-x, m, LMP, Ain = Obj.PTDF_LP_OPF(DemandProfile, Pjk_0, Vm_0, Pg_0, Pdr_0)
 print(x.X)
 print('Obj: %g' % m.objVal)
 
 #plot results
-plot_obj = plottingDispatch(None, None, PointsInTime, DIR, vmin=0.95, vmax=1.05, PTDF=PTDF, dispatchType='LP')
+plot_obj = plottingDispatch(None, None, PointsInTime, DIR, vmin=0.95, vmax=1.05, PTDF=PTDF, dispatchType=dispatch)
 
 # extract dispatch results
 Pg, Pdr, Pij, Pchar, Pdis, E = plot_obj.extractResults(x=x, 
