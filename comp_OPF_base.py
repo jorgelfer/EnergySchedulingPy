@@ -40,7 +40,7 @@ PTDF = qsts["dpdp"]["matrix"]
 
 # reshape flatten array
 PTDF = np.reshape(qsts["dpdp"]["matrix"], (rl, cl), order='F')
-PTDF = pd.DataFrame(PTDF, columns=qsts["dpdp"]["nodes"], index=qsts["dpdp"]["nnns"])
+PTDF = pd.DataFrame(PTDF, columns=qsts["dpdp"]["nodes"], index=qsts["dpdp"]["lns"])
 
 # adjust lossless PTDF
 PTDF= PTDF.round()
