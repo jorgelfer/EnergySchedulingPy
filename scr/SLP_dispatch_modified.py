@@ -13,7 +13,7 @@ from scipy import sparse
 
 class SLP_dispatch:
 
-    def __init__(self, pf, PTDF, batt, Pjk_lim, Gmax, cgn, clin, cdr, v_base, dvdp, storage, vmin, vmax):
+    def __init__(self, pf, PTDF, batt, Pjk_lim, Gmax, cgn, clin, cdr, v_base, dvdp, storage, vmin=0.95, vmax=1.05):
         # constructor
         ###########
         

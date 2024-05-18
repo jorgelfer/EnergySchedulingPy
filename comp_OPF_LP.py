@@ -1,7 +1,8 @@
 # required for processing
-from scr.LP_dispatch import LP_dispatch
+from scr.LP_dispatch_modified import LP_dispatch
 from scr.Plotting import plottingDispatch
-from scr.SLP_dispatch import SLP_dispatch
+from scr.SLP_dispatch_modified import SLP_dispatch
+import matplotlib.pyplot as plt
 import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
@@ -15,7 +16,11 @@ NetworkModel = "123Bus_wye" # "SecondaryTestCircuit_modified", "13Bus", "123Bus"
 InFile1 = "IEEE123Master.dss" # "Master.DSS", "IEEE13Nodeckt.dss", "IEEE123Master.dss", "case3_unbalanced.dss", "4Bus-DY-Bal.dss"
 
 # define optimization model
-dispatch = 'SLP'
+dispatch = 'LP'
+ext = '.png'
+plot = True 
+h = 6 
+w = 4 
 
 ####
 # load qsts 
@@ -61,7 +66,7 @@ PointsInTime = len(qsts["time"])
 # preprocess load
 ###
 nodes = qsts["dpdp"]["nodes"]
-ddict = {key: np.zeros(24) for key in nodes}
+ddict = {key: np.zeros(PointsInTime) for key in nodes}
 for load in qsts["load"]:
 
     # get load bus uid
@@ -101,7 +106,7 @@ Gmax = np.reshape(max_profile.T, (1,np.size(max_profile)), order='F')
 ####
 
 # line costs
-Pijcost = np.zeros((len(PTDF), PointsInTime))
+Pijcost = 0.0 * np.zeros((len(PTDF), PointsInTime))
 clin = np.reshape(Pijcost.T, (1,Pijcost.size), order="F")
 
 # define line limits
@@ -118,7 +123,8 @@ for br in qsts["branch"]:
     for ph in br["phases"]:
         ldict[uid + f".{ph}"] = normal_flow_limit
 
-Lmaxi = pd.DataFrame(np.asarray([ldict[n] for n in bpns]), np.asarray(bpns))
+# Lmaxi = pd.DataFrame(np.asarray([ldict[n] for n in bpns]), np.asarray(bpns))
+Lmaxi = 2000 * np.ones((len(PTDF),1))
 Lmax = np.kron(Lmaxi, np.ones((1,PointsInTime)))
 Lmax = pd.DataFrame(Lmax, index=np.asarray(bpns))
 
@@ -199,21 +205,22 @@ dvdp = pd.DataFrame(dvdp, columns=qsts["dvdp"]["nodes"], index=qsts["dvdp"]["nod
 # preprocess initial flows 
 ####
 bpns = qsts["dpdp"]["bpns"]
-fdict = {key: np.zeros(24) for key in bpns}
-# for br in qsts["branch"]:
-#     # get branch uid
-#     uid = br["uid"].split(".")[1]
+fdict = {key: np.zeros(PointsInTime) for key in bpns}
+for br in qsts["branch"]:
+    # get branch uid
+    uid = br["uid"].split(".")[1]
 
-#     # for each flow
-#     for ph in br["phases"]:
-#         fdict[uid + f".{ph}"] = np.asarray(br["p_nm"][f"{ph}"])
+    # for each flow
+    for ph in br["phases"]:
+        lenp = len(br["p_nm"][f"{ph}"])
+        fdict[uid + f".{ph}"] = np.asarray(br["p_nm"][f"{ph}"])
 Pjk_0 = pd.DataFrame(np.stack([fdict[n] for n in bpns]), index = np.asarray(bpns))
 
 ####
 # preprocess initial voltages magnitutes
 ####
 nodes = qsts["dpdp"]["nodes"]
-vdict = {key: np.zeros(24) for key in nodes}
+vdict = {key: np.zeros(PointsInTime) for key in nodes}
 for bus in qsts["bus"]:
 
     # get load bus uid
@@ -231,7 +238,7 @@ Vm_0 = pd.DataFrame(np.stack([vdict[n] for n in nodes]), index = np.asarray(node
 # initial generation
 ####
 nodes = qsts["dpdp"]["nodes"]
-gdict = {key: np.zeros(24) for key in nodes}
+gdict = {key: np.zeros(PointsInTime) for key in nodes}
 for vs in qsts["vsource"]:
 
     # get load bus uid
@@ -253,7 +260,7 @@ Pdr_0 = pd.DataFrame(0.0, index = np.asarray(nodes), columns = np.arange(PointsI
 ####################################
 ########## optimization
 ####################################
-storage = bool(batt) # if storage is considered
+storage = False # if storage is considered
 
 # create an instance of the dispatch class
 if dispatch == 'SLP':
@@ -287,3 +294,14 @@ outLMP = pd.DataFrame(LMP_Pg[lnodes,:], np.asarray(PTDF.columns[lnodes]), Vm_0.c
 subCost = pd.DataFrame(Gcost[0:3,:], index=PTDF.columns[0:3], columns=Vm_0.columns)
 outLMP = pd.concat([subCost, outLMP], axis=0)
 print(outLMP.head())
+
+# save initial LMP
+plt.clf()
+fig, ax = plt.subplots(figsize=(h,w))
+outLMP.T.plot(legend=False)
+title = f"init_LMP_dispatch_{dispatch}"
+ax.set_title(title)
+fig.tight_layout()
+output_img = os.path.join(DIR, title + ext)
+plt.savefig(output_img)
+plt.close('all')
