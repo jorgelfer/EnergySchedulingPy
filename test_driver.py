@@ -18,7 +18,7 @@ dataset = "IEEETestCases"
 NetworkModel = "123Bus_wye" # "SecondaryTestCircuit_modified", "13Bus", "123Bus", "case3", "4Bus-DY-Bal"
 InFile1 = "IEEE123Master.dss" # "Master.DSS", "IEEE13Nodeckt.dss", "IEEE123Master.dss", "case3_unbalanced.dss", "4Bus-DY-Bal.dss"
 # define optimization model
-dispatch = 'LP'
+dispatch = 'SLP'
 ansi = 0.05
 thermal_limits = False
 storage = False
