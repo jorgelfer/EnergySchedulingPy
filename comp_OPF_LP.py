@@ -154,8 +154,11 @@ batt['BatPenalty'] = np.ones((1,numBatteries))
 # preprocess demand response
 ####
 # costs
-DRcost = 1.0 # in $/kWh
-cdr = DRcost*np.ones((1, len(PTDF.columns) * PointsInTime)) 
+np.random.seed(2024) # Set random seed so results are repeatable
+DRcost = np.random.rand(1, len(PTDF.columns)) 
+cdr = np.kron(DRcost, np.ones((1,PointsInTime))) 
+# DRcost = 1.0 # in $/kWh
+# cdr = DRcost*np.ones((1, len(PTDF.columns) * PointsInTime)) 
 # initial demand response 
 Pdr_0 = pd.DataFrame(0.0, index = np.asarray(nodes), columns = np.arange(PointsInTime))
 
@@ -195,35 +198,27 @@ else:
     Obj = LP_dispatch(pf, PTDF, batt, Lmax, Gmax, cgn, clin, cdr, v_base, dvdp, storage, 1.0-ansi, 1.0+ansi)
     x, m, LMP, Ain = Obj.PTDF_LP_OPF(DemandProfile, Pjk_0, Vm_0, Pg_0, Pdr_0)
 
-# call the OPF method
-# x, m, LMP, Ain = dispatch_obj.PTDF_LP_OPF(demandProfile, Pjk_0, v_0, Pg_0, PDR_0)
+####
+# Results
+####
 print(x.X)
 print('Obj: %g' % m.objVal)
-
-#plot results
-plot_obj = plottingDispatch(None, None, PointsInTime, DIR, vmin=0.95, vmax=1.05, PTDF=PTDF, dispatchType=dispatch)
-
-# extract dispatch results
-Pg, Pdr, Pij, Pchar, Pdis, E = plot_obj.extractResults(x=x, 
-                                                       DR=True, 
-                                                       Storage=storage, 
-                                                       batt=batt
-                                                       )
+# utilities
+plot_obj = plottingDispatch(None, None, PointsInTime, DIR, vmin=1.0-ansi, vmax=1.0+ansi, PTDF=PTDF, dispatchType=dispatch)
+Pg, Pdr, Pij, Pchar, Pdis, E = plot_obj.extractResults(x=x, DR=True, Storage=storage, batt=batt)
 demandProfilei = DemandProfile.any(axis=1)
 lnodes = np.where(demandProfilei)[0]    
-
 # extract LMP results
 LMP_Pg, LMP_Pdr, LMP_Pij, LMP_Pchar, LMP_Pdis, LMP_E = plot_obj.extractLMP(LMP, True, storage, batt)
 outLMP = pd.DataFrame(LMP_Pg[lnodes,:], np.asarray(PTDF.columns[lnodes]), Vm_0.columns) 
 subCost = pd.DataFrame(Gcost[0:3,:], index=PTDF.columns[0:3], columns=Vm_0.columns)
 outLMP = pd.concat([subCost, outLMP], axis=0)
 print(outLMP.head())
-
-# save initial LMP
+# save LMP plot
 plt.clf()
 fig, ax = plt.subplots(figsize=(h,w))
 outLMP.T.plot(legend=False)
-title = f"init_LMP_dispatch_{dispatch}"
+title = f"LMP_dispatch_{dispatch}_ansi_{ansi}_thermal_limits_{thermal_limits}_storage_{storage}_pv_{pv}"
 ax.set_title(title)
 fig.tight_layout()
 output_img = os.path.join(DIR, title + ext)
