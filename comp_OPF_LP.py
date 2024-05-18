@@ -85,17 +85,12 @@ Gmax = np.reshape(max_profile.T, (1,np.size(max_profile)), order='F')
 nodes = qsts["dpdp"]["nodes"]
 gdict = {key: np.zeros(PointsInTime) for key in nodes}
 for vs in qsts["vsource"]:
-
-    # get load bus uid
     uid = vs["bus"] 
-
-    # get load phases
     phases = vs["phases"]
-
-    # load power 
     for ph in phases:
         gdict[uid + f".{ph}"] = np.asarray(vs["p"][f"{ph}"])
 Pg_0 = pd.DataFrame(np.stack([gdict[n] for n in nodes]), index = np.asarray(nodes))
+
 
 ####
 # preprocess branches
@@ -103,22 +98,26 @@ Pg_0 = pd.DataFrame(np.stack([gdict[n] for n in nodes]), index = np.asarray(node
 # line costs
 Pijcost = 0.0 * np.zeros((len(PTDF), PointsInTime))
 clin = np.reshape(Pijcost.T, (1,Pijcost.size), order="F")
-# define line limits
+# loop through branches
 bpns = qsts["dpdp"]["bpns"]
 ldict = {key: 0.0 for key in bpns}
+fdict = {key: np.zeros(PointsInTime) for key in bpns}
 for br in qsts["branch"]:
-    # get branch uid
     uid = br["uid"].split(".")[1]
-
-    # assign normal flow limit (already comes by phase in kW)
     normal_flow_limit = br["normal_flow_limit"] # in kVA
-
     for ph in br["phases"]:
         ldict[uid + f".{ph}"] = normal_flow_limit
-# Lmaxi = pd.DataFrame(np.asarray([ldict[n] for n in bpns]), np.asarray(bpns))
-Lmaxi = 2000 * np.ones((len(PTDF),1))
+        fdict[uid + f".{ph}"] = np.asarray(br["p_nm"][f"{ph}"])
+# limits
+if thermal_limits:
+    Lmaxi = pd.DataFrame(np.asarray([ldict[n] for n in bpns]), np.asarray(bpns))
+else:
+    Lmaxi = 2000 * np.ones((len(PTDF),1))
 Lmax = np.kron(Lmaxi, np.ones((1,PointsInTime)))
 Lmax = pd.DataFrame(Lmax, index=np.asarray(bpns))
+# initial flows
+Pjk_0 = pd.DataFrame(np.stack([fdict[n] for n in bpns]), index = np.asarray(bpns))
+
 
 ####
 # preprocess storage
@@ -164,16 +163,20 @@ Pdr_0 = pd.DataFrame(0.0, index = np.asarray(nodes), columns = np.arange(PointsI
 # preprocess voltage base for each node
 ####
 nodes = qsts["dpdp"]["nodes"]
-vdict = {key: 0.0 for key in nodes}
+vbase_dict = {key: 0.0 for key in nodes}
+vm0_dict = {key: np.zeros(PointsInTime) for key in nodes}
 for bus in qsts["bus"]:
     uid = bus["uid"]
     phases = bus["phases"]
     for ph in phases:
-        vdict[uid + f".{ph}"] = bus["kV_base"]
-v_basei = pd.DataFrame(np.asarray([vdict[n] for n in nodes]), index = np.asarray(nodes))
+        vbase_dict[uid + f".{ph}"] = bus["kV_base"]
+        vm0_dict[uid + f".{ph}"] = np.asarray(bus["vm"][f"{ph}"])
+# base
+v_basei = pd.DataFrame(np.asarray([vbase_dict[n] for n in nodes]), index = np.asarray(nodes))
 v_base = np.kron(v_basei, np.ones((1, PointsInTime)))
 v_base = pd.DataFrame(v_base, index=v_basei.index)
-
+# initial voltage magnitudes
+Vm_0 = pd.DataFrame(np.stack([vm0_dict[n] for n in nodes]), index = np.asarray(nodes))
 
 ####
 # preprocess voltage sensitivity
@@ -181,36 +184,6 @@ v_base = pd.DataFrame(v_base, index=v_basei.index)
 rcl = len(qsts["dvdp"]["nodes"])
 dvdp = np.reshape(qsts["dvdp"]["matrix"], (rcl, rcl), order='F')
 dvdp = pd.DataFrame(dvdp, columns=qsts["dvdp"]["nodes"], index=qsts["dvdp"]["nodes"])
-
-
-####
-# preprocess initial flows 
-####
-bpns = qsts["dpdp"]["bpns"]
-fdict = {key: np.zeros(PointsInTime) for key in bpns}
-for br in qsts["branch"]:
-    # get branch uid
-    uid = br["uid"].split(".")[1]
-
-    # for each flow
-    for ph in br["phases"]:
-        lenp = len(br["p_nm"][f"{ph}"])
-        fdict[uid + f".{ph}"] = np.asarray(br["p_nm"][f"{ph}"])
-Pjk_0 = pd.DataFrame(np.stack([fdict[n] for n in bpns]), index = np.asarray(bpns))
-
-####
-# preprocess initial voltages magnitutes
-####
-nodes = qsts["dpdp"]["nodes"]
-vdict = {key: np.zeros(PointsInTime) for key in nodes}
-for bus in qsts["bus"]:
-    uid = bus["uid"] 
-    phases = bus["phases"]
-    for ph in phases:
-        vdict[uid + f".{ph}"] = np.asarray(bus["vm"][f"{ph}"])
-Vm_0 = pd.DataFrame(np.stack([vdict[n] for n in nodes]), index = np.asarray(nodes))
-
-
 
 ####
 # optimization
