@@ -154,11 +154,11 @@ batt['BatPenalty'] = np.ones((1,numBatteries))
 # preprocess demand response
 ####
 # costs
-np.random.seed(2024) # Set random seed so results are repeatable
-DRcost = np.random.rand(1, len(PTDF.columns)) 
-cdr = np.kron(DRcost, np.ones((1,PointsInTime))) 
-# DRcost = 1.0 # in $/kWh
-# cdr = DRcost*np.ones((1, len(PTDF.columns) * PointsInTime)) 
+# np.random.seed(2024) # Set random seed so results are repeatable
+# DRcost = np.random.rand(1, len(PTDF.columns)) 
+# cdr = np.kron(DRcost, np.ones((1,PointsInTime))) 
+DRcost = 1.0 # in $/kWh
+cdr = DRcost*np.ones((1, len(PTDF.columns) * PointsInTime)) 
 # initial demand response 
 Pdr_0 = pd.DataFrame(0.0, index = np.asarray(nodes), columns = np.arange(PointsInTime))
 
