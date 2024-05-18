@@ -1,7 +1,7 @@
 # required for processing
-from scr.LP_dispatch_modified import LP_dispatch
+from scr.LP_dispatch import LP_dispatch
 from scr.Plotting import plottingDispatch
-from scr.SLP_dispatch_modified import SLP_dispatch
+from scr.SLP_dispatch import SLP_dispatch
 import matplotlib.pyplot as plt
 import numpy as np
 import gurobipy as gp
@@ -10,13 +10,20 @@ import pandas as pd
 import os
 import json
 
+####
+# define case
+###
 # define DSS path
 dataset = "IEEETestCases"
 NetworkModel = "123Bus_wye" # "SecondaryTestCircuit_modified", "13Bus", "123Bus", "case3", "4Bus-DY-Bal"
 InFile1 = "IEEE123Master.dss" # "Master.DSS", "IEEE13Nodeckt.dss", "IEEE123Master.dss", "case3_unbalanced.dss", "4Bus-DY-Bal.dss"
-
 # define optimization model
 dispatch = 'LP'
+ansi = 0.05
+thermal_limits = False
+storage = False
+pv = False
+# plot
 ext = '.png'
 plot = True 
 h = 6 
@@ -27,27 +34,18 @@ w = 4
 ###
 DIR = os.getcwd()
 json_path = os.path.join(DIR, "..", dataset, NetworkModel, "qsts.json")
-
-# Opening JSON file
 f = open(json_path)
- 
-# returns JSON object as 
-# a dictionary
 qsts = json.load(f)
+PointsInTime = len(qsts["time"])
 
 ####
 # preprocess PTDF
 ###
-# row length
 rl = len(qsts["dpdp"]["bpns"])
-
-# column length
 cl = len(qsts["dpdp"]["nodes"])
-
-# reshape flatten array
 PTDF = np.reshape(qsts["dpdp"]["matrix_ij"], (rl, cl), order='F')
 PTDF = pd.DataFrame(PTDF, columns=qsts["dpdp"]["nodes"], index=qsts["dpdp"]["lns"])
-
+PTDF= PTDF.round()
 
 ####
 # preprocess penalty factors
@@ -55,36 +53,20 @@ PTDF = pd.DataFrame(PTDF, columns=qsts["dpdp"]["nodes"], index=qsts["dpdp"]["lns
 pf = pd.Series(np.ones(len(qsts["dpdp"]["nodes"])), index=qsts["dpdp"]["nodes"])
 
 ####
-# adjust lossless PTDF
-####
-PTDF= PTDF.round()
-
-# points in time
-PointsInTime = len(qsts["time"])
-
-####
 # preprocess load
 ###
 nodes = qsts["dpdp"]["nodes"]
 ddict = {key: np.zeros(PointsInTime) for key in nodes}
 for load in qsts["load"]:
-
-    # get load bus uid
     bus = load["bus"] 
-
-    # get load phases
     phases = load["phases"]
-
-    # load power 
     for ph in phases:
         ddict[bus + f".{ph}"] = np.asarray(load["p"][f"{ph}"]) 
-
 DemandProfile = pd.DataFrame(np.stack([ddict[n] for n in nodes]), index = np.asarray(nodes)) # in kW
 
 ####
 # preprocess generation
 ####
-
 # costs
 Gcost = 10000 * np.ones(DemandProfile.shape)
 cost = np.asarray([18.78, 19.35, 19.6, 20.28, 27.69, 34.93, 36.33, 31.69, 29.4, 28.7, 28.49, 25.97, 19.61, 18.65, 17.95, 17.65, 17.8, 18.26, 19.43, 25.88, 19.35, 19.81, 21.46, 19.16])  # in $/MWh
@@ -92,7 +74,6 @@ Gcost[0,:] = cost * 1e-3 # in $/kWh
 Gcost[1,:] = cost * 1e-3 # in $/kWh
 Gcost[2,:] = cost * 1e-3 # in $/kWh
 cgn = np.reshape(Gcost.T, (1, Gcost.size), order="F")
-
 # limits
 Gmax = np.zeros((len(PTDF.columns), 1))
 Gmax[0,0] = 2000 # [kW] asume the slack conventional phase is here
@@ -100,19 +81,31 @@ Gmax[1,0] = 2000 # [kW] asume the slack conventional phase is here
 Gmax[2,0] = 2000 # [kW] asume the slack conventional phase is here
 max_profile = np.kron(Gmax, np.ones((1,PointsInTime)))
 Gmax = np.reshape(max_profile.T, (1,np.size(max_profile)), order='F')
+# initial generation
+nodes = qsts["dpdp"]["nodes"]
+gdict = {key: np.zeros(PointsInTime) for key in nodes}
+for vs in qsts["vsource"]:
+
+    # get load bus uid
+    uid = vs["bus"] 
+
+    # get load phases
+    phases = vs["phases"]
+
+    # load power 
+    for ph in phases:
+        gdict[uid + f".{ph}"] = np.asarray(vs["p"][f"{ph}"])
+Pg_0 = pd.DataFrame(np.stack([gdict[n] for n in nodes]), index = np.asarray(nodes))
 
 ####
 # preprocess branches
 ####
-
 # line costs
 Pijcost = 0.0 * np.zeros((len(PTDF), PointsInTime))
 clin = np.reshape(Pijcost.T, (1,Pijcost.size), order="F")
-
 # define line limits
 bpns = qsts["dpdp"]["bpns"]
 ldict = {key: 0.0 for key in bpns}
-
 for br in qsts["branch"]:
     # get branch uid
     uid = br["uid"].split(".")[1]
@@ -122,7 +115,6 @@ for br in qsts["branch"]:
 
     for ph in br["phases"]:
         ldict[uid + f".{ph}"] = normal_flow_limit
-
 # Lmaxi = pd.DataFrame(np.asarray([ldict[n] for n in bpns]), np.asarray(bpns))
 Lmaxi = 2000 * np.ones((len(PTDF),1))
 Lmax = np.kron(Lmaxi, np.ones((1,PointsInTime)))
@@ -131,7 +123,6 @@ Lmax = pd.DataFrame(Lmax, index=np.asarray(bpns))
 ####
 # preprocess storage
 ####
-
 batt = dict()
 numBatteries= 6
 batt['numBatteries'] = numBatteries
@@ -163,28 +154,22 @@ batt['BatPenalty'] = np.ones((1,numBatteries))
 ####
 # preprocess demand response
 ####
+# costs
 DRcost = 1.0 # in $/kWh
-n = len(PTDF.columns)
-c = len(PTDF.index)
-cdr = DRcost*np.ones((1, n * PointsInTime)) 
+cdr = DRcost*np.ones((1, len(PTDF.columns) * PointsInTime)) 
+# initial demand response 
+Pdr_0 = pd.DataFrame(0.0, index = np.asarray(nodes), columns = np.arange(PointsInTime))
 
 ####
 # preprocess voltage base for each node
 ####
 nodes = qsts["dpdp"]["nodes"]
 vdict = {key: 0.0 for key in nodes}
-
 for bus in qsts["bus"]:
-    # get bus uid
     uid = bus["uid"]
-
-    # get load phases
     phases = bus["phases"]
-
-    # load power 
     for ph in phases:
         vdict[uid + f".{ph}"] = bus["kV_base"]
-
 v_basei = pd.DataFrame(np.asarray([vdict[n] for n in nodes]), index = np.asarray(nodes))
 v_base = np.kron(v_basei, np.ones((1, PointsInTime)))
 v_base = pd.DataFrame(v_base, index=v_basei.index)
@@ -193,10 +178,7 @@ v_base = pd.DataFrame(v_base, index=v_basei.index)
 ####
 # preprocess voltage sensitivity
 ####
-# row and columng length
 rcl = len(qsts["dvdp"]["nodes"])
-
-# reshape flatten array
 dvdp = np.reshape(qsts["dvdp"]["matrix"], (rcl, rcl), order='F')
 dvdp = pd.DataFrame(dvdp, columns=qsts["dvdp"]["nodes"], index=qsts["dvdp"]["nodes"])
 
@@ -222,53 +204,22 @@ Pjk_0 = pd.DataFrame(np.stack([fdict[n] for n in bpns]), index = np.asarray(bpns
 nodes = qsts["dpdp"]["nodes"]
 vdict = {key: np.zeros(PointsInTime) for key in nodes}
 for bus in qsts["bus"]:
-
-    # get load bus uid
     uid = bus["uid"] 
-
-    # get load phases
     phases = bus["phases"]
-
-    # load power 
     for ph in phases:
         vdict[uid + f".{ph}"] = np.asarray(bus["vm"][f"{ph}"])
 Vm_0 = pd.DataFrame(np.stack([vdict[n] for n in nodes]), index = np.asarray(nodes))
 
-####
-# initial generation
-####
-nodes = qsts["dpdp"]["nodes"]
-gdict = {key: np.zeros(PointsInTime) for key in nodes}
-for vs in qsts["vsource"]:
 
-    # get load bus uid
-    uid = vs["bus"] 
-
-    # get load phases
-    phases = vs["phases"]
-
-    # load power 
-    for ph in phases:
-        gdict[uid + f".{ph}"] = np.asarray(vs["p"][f"{ph}"])
-Pg_0 = pd.DataFrame(np.stack([gdict[n] for n in nodes]), index = np.asarray(nodes))
 
 ####
-# initial demand response 
+# optimization
 ####
-Pdr_0 = pd.DataFrame(0.0, index = np.asarray(nodes), columns = np.arange(PointsInTime))
-
-####################################
-########## optimization
-####################################
-storage = False # if storage is considered
-
-# create an instance of the dispatch class
 if dispatch == 'SLP':
-    Obj = SLP_dispatch(pf, PTDF, batt, Lmax, Gmax, cgn, clin, cdr, v_base, dvdp, storage=storage)
+    Obj = SLP_dispatch(pf, PTDF, batt, Lmax, Gmax, cgn, clin, cdr, v_base, dvdp, storage, 1.0-ansi, 1.0+ansi)
     x, m, LMP = Obj.PTDF_SLP_OPF(DemandProfile, Pjk_0, Vm_0, Pg_0, Pdr_0)
 else:
-    #   = LP_dispatch(pf, PTDF, batt, Pjk_lim, Gmax, cgn, clin, cdr, v_base, dvdp, storage, vmin, vmax)
-    Obj = LP_dispatch(pf, PTDF, batt, Lmax, Gmax, cgn, clin, cdr, v_base, dvdp, storage=storage)
+    Obj = LP_dispatch(pf, PTDF, batt, Lmax, Gmax, cgn, clin, cdr, v_base, dvdp, storage, 1.0-ansi, 1.0+ansi)
     x, m, LMP, Ain = Obj.PTDF_LP_OPF(DemandProfile, Pjk_0, Vm_0, Pg_0, Pdr_0)
 
 # call the OPF method
