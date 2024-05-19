@@ -15,14 +15,15 @@ import json
 ###
 # define DSS path
 dataset = "IEEETestCases"
-NetworkModel = "123Bus_wye" # "SecondaryTestCircuit_modified", "13Bus", "123Bus", "case3", "4Bus-DY-Bal"
+NetworkModel = "123Bus_wye"   # "SecondaryTestCircuit_modified", "13Bus", "123Bus", "case3", "4Bus-DY-Bal"
 InFile1 = "IEEE123Master.dss" # "Master.DSS", "IEEE13Nodeckt.dss", "IEEE123Master.dss", "case3_unbalanced.dss", "4Bus-DY-Bal.dss"
 # define optimization model
-dispatch = 'SLP'
-ansi = 0.05
-thermal_limits = False
-storage = False
-pv = False
+dispatch = 'LP'               # 'SLP' or 'LP'
+ansi = 0.1                    # deviation from nominal voltage
+thermal_limits = False        # consider thermal limits
+random_dr = False             # random demand response [0,1] $/kWh or fixed 1 $/kWh
+storage = False               # consider storage
+pv = False                    # consider PV
 # plot
 ext = '.png'
 plot = True 
@@ -154,11 +155,13 @@ batt['BatPenalty'] = np.ones((1,numBatteries))
 # preprocess demand response
 ####
 # costs
-# np.random.seed(2024) # Set random seed so results are repeatable
-# DRcost = np.random.rand(1, len(PTDF.columns)) 
-# cdr = np.kron(DRcost, np.ones((1,PointsInTime))) 
-DRcost = 1.0 # in $/kWh
-cdr = DRcost*np.ones((1, len(PTDF.columns) * PointsInTime)) 
+if random_dr:
+    np.random.seed(2024) # Set random seed so results are repeatable
+    DRcost = np.random.rand(1, len(PTDF.columns)) 
+    cdr = np.kron(DRcost, np.ones((1,PointsInTime))) 
+else:
+    DRcost = 1.0 # in $/kWh
+    cdr = DRcost*np.ones((1, len(PTDF.columns) * PointsInTime)) 
 # initial demand response 
 Pdr_0 = pd.DataFrame(0.0, index = np.asarray(nodes), columns = np.arange(PointsInTime))
 
@@ -214,13 +217,15 @@ outLMP = pd.DataFrame(LMP_Pg[lnodes,:], np.asarray(PTDF.columns[lnodes]), Vm_0.c
 subCost = pd.DataFrame(Gcost[0:3,:], index=PTDF.columns[0:3], columns=Vm_0.columns)
 outLMP = pd.concat([subCost, outLMP], axis=0)
 print(outLMP.head())
-# save LMP plot
-plt.clf()
-fig, ax = plt.subplots(figsize=(h,w))
-outLMP.T.plot(legend=False)
-title = f"LMP_dispatch_{dispatch}_ansi_{ansi}_thermal_limits_{thermal_limits}_storage_{storage}_pv_{pv}"
-ax.set_title(title)
-fig.tight_layout()
-output_img = os.path.join(DIR, title + ext)
-plt.savefig(output_img)
-plt.close('all')
+# plot and save LMP
+if plot:
+    # save LMP plot
+    plt.clf()
+    fig, ax = plt.subplots(figsize=(h,w))
+    outLMP.T.plot(legend=False)
+    title = f"LMP_dispatch_{dispatch}_ansi_{ansi}_thermal_limits_{thermal_limits}_storage_{storage}_pv_{pv}"
+    ax.set_title(title)
+    fig.tight_layout()
+    output_img = os.path.join(DIR, title + ext)
+    plt.savefig(output_img)
+    plt.close('all')
