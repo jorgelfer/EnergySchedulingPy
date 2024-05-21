@@ -19,9 +19,8 @@ NetworkModel = "123Bus_wye"   # "SecondaryTestCircuit_modified", "13Bus", "123Bu
 InFile1 = "IEEE123Master.dss" # "Master.DSS", "IEEE13Nodeckt.dss", "IEEE123Master.dss", "case3_unbalanced.dss", "4Bus-DY-Bal.dss"
 # define optimization model
 dispatch = 'LP'               # 'SLP' or 'LP'
-ansi = 0.1                    # deviation from nominal voltage
-thermal_limits = False        # consider thermal limits
-random_dr = False             # random demand response [0,1] $/kWh or fixed 1 $/kWh
+ansi = 0.05                    # deviation from nominal voltage
+thermal_limits = True        # consider thermal limits
 storage = False               # consider storage
 pv = False                    # consider PV
 # plot
@@ -155,13 +154,12 @@ batt['BatPenalty'] = np.ones((1,numBatteries))
 # preprocess demand response
 ####
 # costs
-if random_dr:
-    np.random.seed(2024) # Set random seed so results are repeatable
-    DRcost = np.random.rand(1, len(PTDF.columns)) 
-    cdr = np.kron(DRcost, np.ones((1,PointsInTime))) 
-else:
-    DRcost = 1.0 # in $/kWh
-    cdr = DRcost*np.ones((1, len(PTDF.columns) * PointsInTime)) 
+DRcost = 1.0 # in $/kWh
+cdr = DRcost*np.ones((1, len(PTDF.columns) * PointsInTime)) 
+# if random_dr:
+#     np.random.seed(2024) # Set random seed so results are repeatable
+#     DRcost = np.random.rand(1, len(PTDF.columns)) 
+#     cdr = np.kron(DRcost, np.ones((1,PointsInTime))) 
 # initial demand response 
 Pdr_0 = pd.DataFrame(0.0, index = np.asarray(nodes), columns = np.arange(PointsInTime))
 
